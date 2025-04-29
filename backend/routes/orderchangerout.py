@@ -1,18 +1,33 @@
+# routes/orderchangerout.py
 from flask import Blueprint
-from controllers.orderchangecontrol import OrderController
+from controllers.orderchangecontrol import OrderChangeController
 
-# Create a Blueprint for order routes
-order_routes = Blueprint('order_routes', __name__)
+# Create Blueprint
+order_routes = Blueprint("order_routes", __name__)
 
-# Order routes
-order_routes.route('/api/orders', methods=['POST'])(OrderController.create_order)
-order_routes.route('/api/orders/my-orders', methods=['GET'])(OrderController.get_customer_orders)
-order_routes.route('/api/orders/product/<product_id>', methods=['GET'])(OrderController.get_customer_product_orders)
-order_routes.route('/api/orders/<order_id>', methods=['GET'])(OrderController.get_order_details)
-order_routes.route('/api/orders/<order_id>/status', methods=['PUT'])(OrderController.update_order_status)
-order_routes.route('/api/orders', methods=['GET'])(OrderController.get_all_orders)
+# Define routes
+@order_routes.route("/", methods=["GET"])
+def get_all_orders():
+    """Route to get all orders."""
+    return OrderChangeController.get_all_orders()
 
-# Function to register routes with the Flask app
+@order_routes.route("/create", methods=["POST"])
+def create_order():
+    """Route to create a new order."""
+    return OrderChangeController.create_order()
+
+@order_routes.route("/delete/<order_id>", methods=["DELETE"])
+def delete_order(order_id):
+    """Route to delete an order by ID."""
+    return OrderChangeController.delete_order(order_id)
+
+
+@order_routes.route("/update/<order_id>", methods=["PUT"])
+def update_order(order_id):
+    """Route to update an order by ID."""
+    return OrderChangeController.update_order(order_id)
+
+
 def register_order_routes(app):
-    app.register_blueprint(order_routes)
-    print("✅ Order routes registered")
+    """Register order routes with the Flask app."""
+    app.register_blueprint(order_routes, url_prefix="/")

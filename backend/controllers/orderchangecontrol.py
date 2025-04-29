@@ -1,275 +1,98 @@
+# controllers/orderchangecontrol.py
 from flask import request, jsonify
-from models.orderchangemodel import OrderModel
-from bson.errors import InvalidId
-from functools import wraps
-import jwt
-from config.config import Config
+from models.orderchangemodel import OrderChangeModel
 
-def token_required(f):
-    """Decorator to check JWT token in headers"""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        auth_header = request.headers.get('Authorization')
-        
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            
-        if not token:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication token is missing',
-                'error': 'Unauthorized'
-            }), 401
-            
-        try:
-            payload = jwt.decode(token, Config.JWT_SECRET_KEY, algorithms=['HS256'])
-            # Add user info to request
-            request.user = {
-                'id': payload['id'],
-                'email': payload['email'],
-                'role': payload.get('role', 'user')
-            }
-        except jwt.ExpiredSignatureError:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication token has expired',
-                'error': 'Unauthorized'
-            }), 401
-        except jwt.InvalidTokenError:
-            return jsonify({
-                'success': False,
-                'message': 'Invalid authentication token',
-                'error': 'Unauthorized'
-            }), 401
-            
-        return f(*args, **kwargs)
-    
-    return decorated
+class OrderChangeController:
+    """Controller for handling order change operations."""
 
-class OrderController:
-    """Controller for handling order operations"""
-    
     @staticmethod
-    @token_required
     def create_order():
-        """Create a new order"""
+        """Create a new order."""
         try:
-            data = request.json
-            required_fields = [
-                'customerId', 'customerEmail', 'productId', 
-                'productName', 'totalPrice', 'color', 
-                'quantity', 'paymentMethod'
-            ]
+            data = request.get_json()
             
-            # Check if all required fields are present
-            for field in required_fields:
-                if field not in data:
-                    return jsonify({
-                        'success': False,
-                        'message': f'Missing required field: {field}',
-                        'error': 'Bad Request'
-                    }), 400
+            # Validate required fields
+            if not all(key in data for key in ["color", "size", "add", "quan"]):
+                return jsonify({"success": False, "message": "Missing required fields"}), 400
             
-            # Create new order
-            order = OrderModel.create_order(data)
+            # Validate quan is a positive integer
+            try:
+                quan = int(data["quan"])
+                if quan <= 0:
+                    return jsonify({"success": False, "message": "Quantity must be positive"}), 400
+                data["quan"] = quan
+            except ValueError:
+                return jsonify({"success": False, "message": "Quantity must be a number"}), 400
             
-            return jsonify({
-                'success': True,
-                'message': 'Order created successfully',
-                'data': order
-            }), 201
-            
+            # Create order
+            order_id = OrderChangeModel.create_order(data)
+            if order_id:
+                return jsonify({
+                    "success": True,
+                    "message": "Order created successfully",
+                    "order_id": order_id
+                }), 201
+            else:
+                return jsonify({"success": False, "message": "Failed to create order"}), 500
+        
         except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': str(e),
-                'error': 'Server Error'
-            }), 500
-    
+            print(f"Error creating order: {e}")
+            return jsonify({"success": False, "message": "Server error"}), 500
+
     @staticmethod
-    @token_required
-    def get_customer_orders():
-        """Get all orders for the current customer"""
-        try:
-            # Get customer ID from authenticated user
-            customer_id = request.user['id']
-            
-            orders = OrderModel.get_orders_by_customer(customer_id)
-            
-            return jsonify({
-                'success': True,
-                'data': orders,
-                'count': len(orders)
-            }), 200
-            
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': str(e),
-                'error': 'Server Error'
-            }), 500
-    
-    @staticmethod
-    @token_required
-    def get_customer_product_orders(product_id):
-        """Get all orders for the current customer and a specific product"""
-        try:
-            # Get customer ID from authenticated user
-            customer_id = request.user['id']
-            
-            orders = OrderModel.get_customer_product_orders(customer_id, product_id)
-            
-            return jsonify({
-                'success': True,
-                'data': orders,
-                'count': len(orders)
-            }), 200
-            
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': str(e),
-                'error': 'Server Error'
-            }), 500
-    
-    @staticmethod
-    @token_required
-    def get_order_details(order_id):
-        """Get details of a specific order"""
-        try:
-            order = OrderModel.get_order_by_id(order_id)
-            
-            if not order:
-                return jsonify({
-                    'success': False,
-                    'message': 'Order not found',
-                    'error': 'Not Found'
-                }), 404
-            
-            # Check if order belongs to current user (unless admin)
-            if request.user['role'] != 'admin' and request.user['id'] != order['customerId']:
-                return jsonify({
-                    'success': False,
-                    'message': 'You do not have permission to view this order',
-                    'error': 'Forbidden'
-                }), 403
-            
-            return jsonify({
-                'success': True,
-                'data': order
-            }), 200
-            
-        except InvalidId:
-            return jsonify({
-                'success': False,
-                'message': 'Invalid order ID format',
-                'error': 'Bad Request'
-            }), 400
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': str(e),
-                'error': 'Server Error'
-            }), 500
-    
-    @staticmethod
-    @token_required
-    def update_order_status(order_id):
-        """Update the status of an order (admin only)"""
-        try:
-            # Check if user is admin
-            if request.user['role'] != 'admin':
-                return jsonify({
-                    'success': False,
-                    'message': 'You do not have permission to update order status',
-                    'error': 'Forbidden'
-                }), 403
-            
-            data = request.json
-            if 'status' not in data:
-                return jsonify({
-                    'success': False,
-                    'message': 'Status field is required',
-                    'error': 'Bad Request'
-                }), 400
-            
-            # Valid status values
-            valid_statuses = ['pending', 'processing', 'shipped', 'delivered', 'completed', 'cancelled']
-            if data['status'] not in valid_statuses:
-                return jsonify({
-                    'success': False,
-                    'message': f'Invalid status. Must be one of: {", ".join(valid_statuses)}',
-                    'error': 'Bad Request'
-                }), 400
-            
-            success = OrderModel.update_order_status(order_id, data['status'])
-            
-            if not success:
-                return jsonify({
-                    'success': False,
-                    'message': 'Order not found or status not updated',
-                    'error': 'Not Found'
-                }), 404
-            
-            return jsonify({
-                'success': True,
-                'message': 'Order status updated successfully'
-            }), 200
-            
-        except InvalidId:
-            return jsonify({
-                'success': False,
-                'message': 'Invalid order ID format',
-                'error': 'Bad Request'
-            }), 400
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': str(e),
-                'error': 'Server Error'
-            }), 500
-    
-    @staticmethod
-    @token_required
     def get_all_orders():
-        """Get all orders (admin only)"""
+        """Retrieve all orders."""
         try:
-            # Check if user is admin
-            if request.user['role'] != 'admin':
-                return jsonify({
-                    'success': False,
-                    'message': 'You do not have permission to view all orders',
-                    'error': 'Forbidden'
-                }), 403
-            
-            # Get pagination parameters
-            page = int(request.args.get('page', 1))
-            limit = int(request.args.get('limit', 20))
-            status = request.args.get('status')
-            
-            # Validate pagination parameters
-            if page < 1:
-                page = 1
-            if limit < 1 or limit > 100:
-                limit = 20
-            
-            orders, total = OrderModel.get_all_orders(page, limit, status)
-            
-            return jsonify({
-                'success': True,
-                'data': orders,
-                'pagination': {
-                    'total': total,
-                    'page': page,
-                    'limit': limit,
-                    'pages': (total + limit - 1) // limit
-                }
-            }), 200
-            
+            orders = OrderChangeModel.get_all_orders()
+            return jsonify({"success": True, "data": orders}), 200
+        
         except Exception as e:
+            print(f"Error retrieving orders: {e}")
+            return jsonify({"success": False, "message": "Server error"}), 500
+
+    @staticmethod
+    def delete_order(order_id):
+        """Delete an order by ID."""
+        try:
+            if OrderChangeModel.delete_order(order_id):
+                return jsonify({"success": True, "message": "Order deleted successfully"}), 200
+            else:
+                return jsonify({"success": False, "message": "Order not found"}), 404
+        
+        except Exception as e:
+            print(f"Error deleting order: {e}")
+            return jsonify({"success": False, "message": "Server error"}), 500
+        
+    
+    @staticmethod
+    def update_order(order_id):
+      """Update an existing order."""
+      try:
+        data = request.get_json()
+        
+        # Validate that at least one field to update is provided
+        if not any(key in data for key in ["color", "size", "add", "quan"]):
+            return jsonify({"success": False, "message": "No fields to update provided"}), 400
+        
+        # Validate quan if it's provided
+        if "quan" in data:
+            try:
+                quan = int(data["quan"])
+                if quan <= 0:
+                    return jsonify({"success": False, "message": "Quantity must be positive"}), 400
+                data["quan"] = quan
+            except ValueError:
+                return jsonify({"success": False, "message": "Quantity must be a number"}), 400
+        
+        # Update order
+        if OrderChangeModel.update_order(order_id, data):
             return jsonify({
-                'success': False,
-                'message': str(e),
-                'error': 'Server Error'
-            }), 500
+                "success": True,
+                "message": "Order updated successfully"
+            }), 200
+        else:
+            return jsonify({"success": False, "message": "Order not found or no changes made"}), 404
+    
+      except Exception as e:
+        print(f"Error updating order: {e}")
+        return jsonify({"success": False, "message": "Server error"}), 500
